@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef } from "react";
 import { reaction } from "mobx";
 import { useMap } from "react-leaflet";
 import L from "leaflet";
@@ -56,18 +56,9 @@ export function ObjectMarkersLayer() {
   const layerGroupRef = useRef<L.LayerGroup | null>(null);
   const markersRef = useRef<Map<string, MarkerEntry>>(new Map());
 
-  const [bounds, setBounds] = useState(map.getBounds());
-
   useEffect(() => {
     const layer = L.layerGroup().addTo(map);
     layerGroupRef.current = layer;
-
-    const updateBounds = () => {
-      setBounds(map.getBounds());
-    };
-
-    map.on("moveend", updateBounds);
-    map.on("zoomend", updateBounds);
 
     const handleMapClick = () => {
       rootStore.mapUiStore.clearSelection();
@@ -93,8 +84,10 @@ export function ObjectMarkersLayer() {
         const layer = layerGroupRef.current;
         if (!layer) return;
 
+        const currentBounds = map.getBounds();
+
         const visibleObjects = objects.filter((obj) =>
-          bounds.contains([obj.lat, obj.lng]),
+          currentBounds.contains([obj.lat, obj.lng]),
         );
 
         const visibleIds = new Set(visibleObjects.map((o) => o.id));
@@ -162,8 +155,6 @@ export function ObjectMarkersLayer() {
     return () => {
       dispose();
 
-      map.off("moveend", updateBounds);
-      map.off("zoomend", updateBounds);
       map.off("click", handleMapClick);
 
       for (const entry of markersRef.current.values()) {
@@ -173,7 +164,7 @@ export function ObjectMarkersLayer() {
       markersRef.current.clear();
       map.removeLayer(layer);
     };
-  }, [map, bounds]);
+  }, [map]);
 
   return null;
 }
