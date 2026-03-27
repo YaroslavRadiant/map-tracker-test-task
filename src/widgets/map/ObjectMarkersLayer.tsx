@@ -1,13 +1,8 @@
-import { useEffect, useRef } from "react";
-import { reaction } from "mobx";
-import { useMap } from "react-leaflet";
+import { useEffect, useMemo, useState } from "react";
+import { observer } from "mobx-react-lite";
+import { Marker, useMap } from "react-leaflet";
 import L from "leaflet";
 import { rootStore } from "../../stores/RootStore";
-
-type MarkerEntry = {
-  marker: L.Marker;
-  lastKey: string;
-};
 
 const iconCache = new Map<string, L.DivIcon>();
 
@@ -41,130 +36,51 @@ function getIcon(
   return icon;
 }
 
-function getMarkerKey(
-  direction: number,
-  isLost: boolean,
-  isOwn: boolean,
-  isSelected: boolean,
-) {
-  const roundedDirection = Math.round(direction / 15) * 15;
-  return `${roundedDirection}-${isLost}-${isOwn}-${isSelected}`;
-}
-
-export function ObjectMarkersLayer() {
+export const ObjectMarkersLayer = observer(() => {
   const map = useMap();
-  const layerGroupRef = useRef<L.LayerGroup | null>(null);
-  const markersRef = useRef<Map<string, MarkerEntry>>(new Map());
+
+  const objects = rootStore.objectStore.objectsList;
+  const selectedId = rootStore.mapUiStore.selectedObjectId;
+  const [bounds, setBounds] = useState(map.getBounds());
 
   useEffect(() => {
-    const layer = L.layerGroup().addTo(map);
-    layerGroupRef.current = layer;
+    const update = () => setBounds(map.getBounds());
 
-    const handleMapClick = () => {
-      rootStore.mapUiStore.clearSelection();
-    };
-
-    map.on("click", handleMapClick);
-
-    const dispose = reaction(
-      () => {
-        const selectedId = rootStore.mapUiStore.selectedObjectId;
-
-        return rootStore.objectStore.objectsList.map((obj) => ({
-          id: obj.id,
-          lat: obj.lat,
-          lng: obj.lng,
-          direction: obj.direction,
-          isOwn: obj.isOwn,
-          isLost: obj.status === "lost",
-          isSelected: selectedId === obj.id,
-        }));
-      },
-      (objects) => {
-        const layer = layerGroupRef.current;
-        if (!layer) return;
-
-        const currentBounds = map.getBounds();
-
-        const visibleObjects = objects.filter((obj) =>
-          currentBounds.contains([obj.lat, obj.lng]),
-        );
-
-        const visibleIds = new Set(visibleObjects.map((o) => o.id));
-
-        for (const [id, entry] of markersRef.current.entries()) {
-          if (!visibleIds.has(id)) {
-            layer.removeLayer(entry.marker);
-            markersRef.current.delete(id);
-          }
-        }
-
-        for (const obj of visibleObjects) {
-          const markerKey = getMarkerKey(
-            obj.direction,
-            obj.isLost,
-            obj.isOwn,
-            obj.isSelected,
-          );
-
-          const existing = markersRef.current.get(obj.id);
-
-          if (!existing) {
-            const marker = L.marker([obj.lat, obj.lng], {
-              icon: getIcon(
-                obj.direction,
-                obj.isLost,
-                obj.isOwn,
-                obj.isSelected,
-              ),
-            });
-
-            marker.on("click", (e) => {
-              L.DomEvent.stopPropagation(e);
-              rootStore.mapUiStore.selectObject(obj.id);
-            });
-
-            marker.addTo(layer);
-
-            markersRef.current.set(obj.id, {
-              marker,
-              lastKey: markerKey,
-            });
-
-            continue;
-          }
-
-          existing.marker.setLatLng([obj.lat, obj.lng]);
-
-          if (existing.lastKey !== markerKey) {
-            existing.marker.setIcon(
-              getIcon(obj.direction, obj.isLost, obj.isOwn, obj.isSelected),
-            );
-            existing.lastKey = markerKey;
-          }
-        }
-
-        const selectedId = rootStore.mapUiStore.selectedObjectId;
-        if (selectedId && !visibleIds.has(selectedId)) {
-          rootStore.mapUiStore.clearSelection();
-        }
-      },
-      { fireImmediately: true },
-    );
+    map.on("moveend zoomend", update);
 
     return () => {
-      dispose();
-
-      map.off("click", handleMapClick);
-
-      for (const entry of markersRef.current.values()) {
-        layer.removeLayer(entry.marker);
-      }
-
-      markersRef.current.clear();
-      map.removeLayer(layer);
+      map.off("moveend zoomend", update);
     };
   }, [map]);
 
-  return null;
-}
+  const visibleObjects = useMemo(() => {
+    return objects.filter((obj) => bounds.contains([obj.lat, obj.lng]));
+  }, [objects, bounds]);
+
+  return (
+    <>
+      {visibleObjects.map((obj) => {
+        const isSelected = selectedId === obj.id;
+
+        return (
+          <Marker
+            key={obj.id}
+            position={[obj.lat, obj.lng]}
+            icon={getIcon(
+              obj.direction,
+              obj.status === "lost",
+              obj.isOwn,
+              isSelected,
+            )}
+            eventHandlers={{
+              click: (e) => {
+                L.DomEvent.stopPropagation(e);
+                rootStore.mapUiStore.selectObject(obj.id);
+              },
+            }}
+          />
+        );
+      })}
+    </>
+  );
+});
